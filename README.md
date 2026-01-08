@@ -28,7 +28,7 @@ A privacy-focused AI assistant I built as an alternative to Google Gemini while 
 
 ## 🚀 Quick Start
 
-1. **Download** the APK from [Releases](releases)
+1. **Download** the APK from [Releases](../../releases)
 2. **Install** on your device
 3. **Get API keys**:
    - [OpenRouter](https://openrouter.ai) or GitHub Copilot
@@ -65,18 +65,20 @@ Good question! Here's my reasoning:
 - **Open source**: You can see exactly what it does
 - **GrapheneOS compatible**: Works perfectly without Google Play Services
 
-## 🛠️ Building from Source
-```bash
-# Clone the repo
-git clone https://github.com/mx37/grapheneos-ai.git
-cd grapheneos-ai
+## ⚠️ Known Issues
 
-# Build
-./gradlew assembleDebug
+### GitHub Copilot - Session Expires Quickly
+If you're using GitHub Copilot as your AI backend, be aware that **sessions expire quickly** (typically within hours). This means you'll need to **re-authenticate frequently**, which can be inconvenient.
 
-# Install
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
+**Workaround**: 
+- Use **OpenRouter** instead (recommended) - more stable sessions
+- Re-authenticate in Settings when prompted
+- Consider switching to OpenRouter for a better experience
+
+## 📚 Documentation
+
+- **[Architecture Overview](docs/ARCHITECTURE.md)** - Technical design and components
+- **[Documentation](docs/DOCUMENTATION.md)** - How to build and use
 
 ## 🤝 Contributing
 
@@ -97,7 +99,3 @@ MIT
 - **OpenRouter** - For unified access to multiple AI models
 - **Brave Search** - For privacy-respecting search API
 - **Whisper.cpp** / **Vosk** - For on-device speech recognition
-
----
-
-**Note**: This project is not affiliated with GrapheneOS, Google, or any AI provider. It's an independent tool built by someone who cares about privacy and wanted a better solution.
