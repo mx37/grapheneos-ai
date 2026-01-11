@@ -36,8 +36,9 @@ class SettingsManager(context: Context) {
         const val PROVIDER_OPENROUTER = "openrouter"
         const val PROVIDER_COPILOT = "copilot"
         
-        // Search Engines (only Brave now)
+        // Search Engines
         const val SEARCH_BRAVE = "brave"
+        const val SEARCH_EXA = "exa"
         
         val AVAILABLE_MODELS = listOf(
             ModelInfo("openai/gpt-4o-mini", "GPT-4o Mini", "Fast, vision", true),

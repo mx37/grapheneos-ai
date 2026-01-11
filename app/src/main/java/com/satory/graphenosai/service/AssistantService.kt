@@ -20,6 +20,8 @@ import com.satory.graphenosai.llm.ChatSession
 import com.satory.graphenosai.llm.CopilotClient
 import com.satory.graphenosai.llm.OpenRouterClient
 import com.satory.graphenosai.search.BraveSearchClient
+import com.satory.graphenosai.search.ExaSearchClient
+import com.satory.graphenosai.search.SearchResult
 import com.satory.graphenosai.storage.ChatHistoryManager
 import com.satory.graphenosai.tts.TTSManager
 import com.satory.graphenosai.ui.SettingsManager
@@ -42,6 +44,7 @@ class AssistantService : Service() {
     lateinit var openRouterClient: OpenRouterClient
     private lateinit var copilotClient: CopilotClient
     private lateinit var braveSearchClient: BraveSearchClient
+    private lateinit var exaSearchClient: ExaSearchClient
     private lateinit var ttsManager: TTSManager
     lateinit var settingsManager: SettingsManager
     lateinit var chatHistoryManager: ChatHistoryManager
@@ -184,6 +187,7 @@ class AssistantService : Service() {
         }
         
         braveSearchClient = BraveSearchClient(app.secureKeyManager)
+        exaSearchClient = ExaSearchClient(app.secureKeyManager)
         ttsManager = TTSManager(this)
         
         // Initialize Vosk with selected language (and secondary for multilingual)
@@ -612,14 +616,25 @@ class AssistantService : Service() {
             if (_webSearchEnabled.value && imageBase64 == null) {
                 _assistantState.value = AssistantState.Searching
                 
-                val searchResults = braveSearchClient.search(sanitizedQuery)
+                // Use selected search engine
+                val searchResults: List<SearchResult> = when (settingsManager.searchEngine) {
+                    SettingsManager.SEARCH_EXA -> {
+                        val results = exaSearchClient.search(sanitizedQuery)
+                        Log.i(TAG, "Exa search returned ${results.size} results")
+                        results
+                    }
+                    else -> {
+                        val results = braveSearchClient.search(sanitizedQuery)
+                        Log.i(TAG, "Brave search returned ${results.size} results")
+                        results
+                    }
+                }
                 
                 if (searchResults.isNotEmpty()) {
                     contextSources = searchResults.map { it.url }
                     searchContext = searchResults.joinToString("\n\n") { 
                         "Source: ${it.title}\nURL: ${it.url}\n${it.snippet}"
                     }
-                    Log.i(TAG, "Brave search returned ${searchResults.size} results")
                 }
             }
             

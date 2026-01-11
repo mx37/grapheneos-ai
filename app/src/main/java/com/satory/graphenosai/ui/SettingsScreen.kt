@@ -65,11 +65,15 @@ fun SettingsScreen(
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showCopilotTokenDialog by remember { mutableStateOf(false) }
     var showBraveKeyDialog by remember { mutableStateOf(false) }
+    var showExaKeyDialog by remember { mutableStateOf(false) }
+    var showSearchEngineDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showSecondaryLanguageDialog by remember { mutableStateOf(false) }
     var hasApiKey by remember { mutableStateOf(app.secureKeyManager.hasOpenRouterApiKey()) }
     var hasCopilotToken by remember { mutableStateOf(app.secureKeyManager.hasCopilotToken()) }
     var hasBraveApiKey by remember { mutableStateOf(app.secureKeyManager.hasBraveApiKey()) }
+    var hasExaApiKey by remember { mutableStateOf(app.secureKeyManager.hasExaApiKey()) }
+    var searchEngine by remember { mutableStateOf(settingsManager.searchEngine) }
     
     // Voice language state
     var selectedLanguage by remember { mutableStateOf(settingsManager.voiceLanguage) }
@@ -139,25 +143,41 @@ fun SettingsScreen(
             
             // Web Search Section
             SettingsSection(title = "Web Search") {
-                // Brave Search is the only option now - it's free (2000 queries/month)
+                // Search engine selector
+                val searchEngineName = when (searchEngine) {
+                    SettingsManager.SEARCH_BRAVE -> "Brave Search"
+                    SettingsManager.SEARCH_EXA -> "Exa AI"
+                    else -> "Brave Search"
+                }
                 SettingsItem(
                     icon = Icons.Default.Search,
                     title = "Search Engine",
-                    subtitle = "Brave Search (free API)",
-                    onClick = { /* Brave is the only option */ }
+                    subtitle = searchEngineName,
+                    onClick = { showSearchEngineDialog = true }
                 )
                 
-                // Brave API Key - always show since it's the only search engine
-                SettingsItem(
-                    icon = Icons.Default.Key,
-                    title = "Brave Search API Key",
-                    subtitle = if (hasBraveApiKey) "Configured ✓" else "Required • Free at brave.com/search/api",
-                    onClick = { showBraveKeyDialog = true }
-                )
+                // Show API key field based on selected search engine
+                if (searchEngine == SettingsManager.SEARCH_BRAVE) {
+                    SettingsItem(
+                        icon = Icons.Default.Key,
+                        title = "Brave Search API Key",
+                        subtitle = if (hasBraveApiKey) "Configured ✓" else "Required • Free at brave.com/search/api",
+                        onClick = { showBraveKeyDialog = true }
+                    )
+                } else {
+                    SettingsItem(
+                        icon = Icons.Default.Key,
+                        title = "Exa AI API Key",
+                        subtitle = if (hasExaApiKey) "Configured ✓" else "Required • Get at dashboard.exa.ai",
+                        onClick = { showExaKeyDialog = true }
+                    )
+                }
                 
                 Text(
-                    text = "Web search enriches AI responses with real-time information. " +
-                           "Get a free Brave Search API key (2000 queries/month) at brave.com/search/api",
+                    text = if (searchEngine == SettingsManager.SEARCH_BRAVE)
+                        "Brave Search: Privacy-focused, 2000 free queries/month"
+                    else
+                        "Exa AI: Semantic search with AI-powered results",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -770,6 +790,32 @@ fun SettingsScreen(
                 showBraveKeyDialog = false
             },
             onDismiss = { showBraveKeyDialog = false }
+        )
+    }
+    
+    // Exa AI API Key Dialog
+    if (showExaKeyDialog) {
+        ExaApiKeyDialog(
+            hasExistingKey = hasExaApiKey,
+            onApiKeySaved = { key ->
+                app.secureKeyManager.setExaApiKey(key)
+                hasExaApiKey = true
+                showExaKeyDialog = false
+            },
+            onDismiss = { showExaKeyDialog = false }
+        )
+    }
+    
+    // Search Engine Selection Dialog
+    if (showSearchEngineDialog) {
+        SearchEngineDialog(
+            currentEngine = searchEngine,
+            onEngineSelected = { engine ->
+                searchEngine = engine
+                settingsManager.searchEngine = engine
+                showSearchEngineDialog = false
+            },
+            onDismiss = { showSearchEngineDialog = false }
         )
     }
     
@@ -1592,4 +1638,156 @@ fun LanguageSelectionDialog(
             }
         }
     }
+}
+
+@Composable
+fun ExaApiKeyDialog(
+    hasExistingKey: Boolean,
+    onApiKeySaved: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var apiKey by remember { mutableStateOf("") }
+    var isVisible by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Exa AI API Key") },
+        text = {
+            Column {
+                if (hasExistingKey) {
+                    Text(
+                        "An API key is already configured. Enter a new key to replace it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                
+                Text(
+                    "Exa AI provides semantic search with AI-powered results.\n\n" +
+                    "• Neural & keyword search\n" +
+                    "• High-quality content extraction\n" +
+                    "• Great for research queries",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                TextButton(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://dashboard.exa.ai/api-keys"))
+                        context.startActivity(intent)
+                    }
+                ) {
+                    Icon(Icons.AutoMirrored.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Get API Key at dashboard.exa.ai")
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("API Key") },
+                    singleLine = true,
+                    visualTransformation = if (isVisible) VisualTransformation.None 
+                                          else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { isVisible = !isVisible }) {
+                            Icon(
+                                if (isVisible) Icons.Default.VisibilityOff 
+                                else Icons.Default.Visibility,
+                                contentDescription = "Toggle visibility"
+                            )
+                        }
+                    }
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onApiKeySaved(apiKey) },
+                enabled = apiKey.isNotBlank()
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun SearchEngineDialog(
+    currentEngine: String,
+    onEngineSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select Search Engine") },
+        text = {
+            Column {
+                // Brave Search option
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onEngineSelected(SettingsManager.SEARCH_BRAVE) }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = currentEngine == SettingsManager.SEARCH_BRAVE,
+                        onClick = { onEngineSelected(SettingsManager.SEARCH_BRAVE) }
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text("Brave Search", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Privacy-focused, 2000 free queries/month",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                
+                HorizontalDivider()
+                
+                // Exa AI option
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onEngineSelected(SettingsManager.SEARCH_EXA) }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = currentEngine == SettingsManager.SEARCH_EXA,
+                        onClick = { onEngineSelected(SettingsManager.SEARCH_EXA) }
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text("Exa AI", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Semantic search with AI-powered results",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

@@ -32,6 +32,7 @@ class SecureKeyManager(private val context: Context) {
         private const val PREF_SEARCH_PROXY_URL = "search_proxy_url"
         private const val PREF_TOKEN_REFRESH_TIME = "token_refresh_time"
         private const val PREF_BRAVE_API_KEY = "brave_api_key"
+        private const val PREF_EXA_API_KEY = "exa_api_key"
     }
 
     private val keyStore: KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply {
@@ -283,6 +284,45 @@ class SecureKeyManager(private val context: Context) {
      */
     fun clearBraveApiKey() {
         prefs.edit().remove(PREF_BRAVE_API_KEY).apply()
+    }
+
+    // ========== Exa AI Search API Key Management ==========
+    
+    /**
+     * Store Exa AI Search API key securely.
+     * Get key at: https://dashboard.exa.ai/api-keys
+     */
+    fun setExaApiKey(apiKey: String) {
+        val encrypted = encrypt(apiKey)
+        prefs.edit().putString(PREF_EXA_API_KEY, encrypted).apply()
+        Log.i(TAG, "Exa API key stored securely")
+    }
+    
+    /**
+     * Retrieve Exa AI Search API key.
+     */
+    fun getExaApiKey(): String? {
+        val encrypted = prefs.getString(PREF_EXA_API_KEY, null) ?: return null
+        return try {
+            decrypt(encrypted)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to decrypt Exa API key", e)
+            null
+        }
+    }
+    
+    /**
+     * Check if Exa API key is configured.
+     */
+    fun hasExaApiKey(): Boolean {
+        return prefs.contains(PREF_EXA_API_KEY)
+    }
+    
+    /**
+     * Clear stored Exa API key.
+     */
+    fun clearExaApiKey() {
+        prefs.edit().remove(PREF_EXA_API_KEY).apply()
     }
 
     // ========== Token Rotation Support ==========
