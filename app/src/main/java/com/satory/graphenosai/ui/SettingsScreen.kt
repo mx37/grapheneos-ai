@@ -32,6 +32,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.satory.graphenosai.AssistantApplication
 import com.satory.graphenosai.audio.VoskTranscriber
 import com.satory.graphenosai.llm.GitHubCopilotAuth
+import com.satory.graphenosai.llm.LocalModelManager
 import com.satory.graphenosai.service.AssistantService
 import kotlinx.coroutines.launch
 
@@ -61,6 +62,7 @@ fun SettingsScreen(
     
     var showModelDialog by remember { mutableStateOf(false) }
     var showCustomModelDialog by remember { mutableStateOf(false) }
+    var showLocalModelDialog by remember { mutableStateOf(false) }
     var showPromptDialog by remember { mutableStateOf(false) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showCopilotTokenDialog by remember { mutableStateOf(false) }
@@ -106,19 +108,78 @@ fun SettingsScreen(
         ) {
             // API Section
             SettingsSection(title = "API Configuration") {
-                // Provider Selection
+                // Provider Selection - now with 3 options
+                var showProviderDialog by remember { mutableStateOf(false) }
+                
+                val providerName = when (apiProvider) {
+                    SettingsManager.PROVIDER_COPILOT -> "GitHub Copilot"
+                    SettingsManager.PROVIDER_LOCAL -> "Local AI (Offline)"
+                    else -> "OpenRouter"
+                }
+                
                 SettingsItem(
-                    icon = Icons.Default.Cloud,
+                    icon = when (apiProvider) {
+                        SettingsManager.PROVIDER_LOCAL -> Icons.Default.OfflineBolt
+                        else -> Icons.Default.Cloud
+                    },
                     title = "AI Provider",
-                    subtitle = if (apiProvider == SettingsManager.PROVIDER_COPILOT) 
-                        "GitHub Copilot" else "OpenRouter",
-                    onClick = { 
-                        apiProvider = if (apiProvider == SettingsManager.PROVIDER_OPENROUTER) 
-                            SettingsManager.PROVIDER_COPILOT else SettingsManager.PROVIDER_OPENROUTER
-                        settingsManager.apiProvider = apiProvider
-                        assistantService?.reloadSettings()
-                    }
+                    subtitle = providerName,
+                    onClick = { showProviderDialog = true }
                 )
+                
+                // Provider selection dialog
+                if (showProviderDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showProviderDialog = false },
+                        title = { Text("Select AI Provider") },
+                        text = {
+                            Column {
+                                listOf(
+                                    Triple(SettingsManager.PROVIDER_OPENROUTER, "OpenRouter", "Cloud AI via API key"),
+                                    Triple(SettingsManager.PROVIDER_COPILOT, "GitHub Copilot", "Cloud AI via GitHub"),
+                                    Triple(SettingsManager.PROVIDER_LOCAL, "Local AI (Offline)", "Runs on device, no internet needed")
+                                ).forEach { (provider, name, description) ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                apiProvider = provider
+                                                settingsManager.apiProvider = provider
+                                                assistantService?.reloadSettings()
+                                                showProviderDialog = false
+                                            }
+                                            .padding(vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = apiProvider == provider,
+                                            onClick = {
+                                                apiProvider = provider
+                                                settingsManager.apiProvider = provider
+                                                assistantService?.reloadSettings()
+                                                showProviderDialog = false
+                                            }
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column {
+                                            Text(name, fontWeight = FontWeight.Medium)
+                                            Text(
+                                                description,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showProviderDialog = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
+                }
                 
                 // OpenRouter API Key
                 if (apiProvider == SettingsManager.PROVIDER_OPENROUTER) {
@@ -141,7 +202,16 @@ fun SettingsScreen(
                 }
             }
             
-            // Web Search Section
+            // Local AI Models Section (only shown when Local provider selected)
+            if (apiProvider == SettingsManager.PROVIDER_LOCAL) {
+                LocalModelsSection(
+                    assistantService = assistantService,
+                    settingsManager = settingsManager
+                )
+            }
+            
+            // Web Search Section - hidden for Local AI (offline)
+            if (apiProvider != SettingsManager.PROVIDER_LOCAL) {
             SettingsSection(title = "Web Search") {
                 // Search engine selector
                 val searchEngineName = when (searchEngine) {
@@ -183,8 +253,10 @@ fun SettingsScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
             }
+            } // End of Web Search conditional
             
-            // Model Section
+            // Model Section - different for local vs cloud providers
+            if (apiProvider != SettingsManager.PROVIDER_LOCAL) {
             SettingsSection(title = "AI Model") {
                 val modelList = if (apiProvider == SettingsManager.PROVIDER_COPILOT) 
                     SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
@@ -211,6 +283,39 @@ fun SettingsScreen(
                     subtitle = systemPrompt.take(50) + if (systemPrompt.length > 50) "..." else "",
                     onClick = { showPromptDialog = true }
                 )
+            }
+            } // End of Model Section conditional
+            
+            // Local Model Selection (shown when using offline AI)
+            if (apiProvider == SettingsManager.PROVIDER_LOCAL) {
+                SettingsSection(title = "Downloaded Models") {
+                    SettingsItem(
+                        icon = Icons.Default.SmartToy,
+                        title = "Local Model",
+                        subtitle = com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS
+                            .find { it.id == settingsManager.localModelId }?.name ?: "Select a model",
+                        onClick = { showLocalModelDialog = true }
+                    )
+                }
+            }
+            
+            // System Prompt for Local AI (shown separately since model section is hidden)
+            if (apiProvider == SettingsManager.PROVIDER_LOCAL) {
+                SettingsSection(title = "AI Configuration") {
+                    SettingsItem(
+                        icon = Icons.Default.Description,
+                        title = "System Prompt",
+                        subtitle = systemPrompt.take(50) + if (systemPrompt.length > 50) "..." else "",
+                        onClick = { showPromptDialog = true }
+                    )
+                    
+                    Text(
+                        text = "⚡ Local AI works completely offline. No data is sent to the internet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
             }
             
             // Voice Section
@@ -738,6 +843,19 @@ fun SettingsScreen(
                 showCustomModelDialog = false
             },
             onDismiss = { showCustomModelDialog = false }
+        )
+    }
+    
+    // Local Model Selection Dialog
+    if (showLocalModelDialog) {
+        LocalModelSelectionDialog(
+            currentModel = settingsManager.localModelId,
+            onModelSelected = { modelId ->
+                settingsManager.localModelId = modelId
+                assistantService?.reloadSettings()
+                showLocalModelDialog = false
+            },
+            onDismiss = { showLocalModelDialog = false }
         )
     }
     
@@ -1790,4 +1908,338 @@ fun SearchEngineDialog(
             }
         }
     )
+}
+
+/**
+ * Section for managing local AI models
+ */
+@Composable
+fun LocalModelsSection(
+    assistantService: com.satory.graphenosai.service.AssistantService?,
+    settingsManager: SettingsManager
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val localModelManager = remember { com.satory.graphenosai.llm.LocalModelManager(context) }
+    
+    var downloadedModels by remember { mutableStateOf(localModelManager.getDownloadedModels()) }
+    var selectedLocalModel by remember { mutableStateOf(settingsManager.localModelId) }
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0) }
+    var downloadingModelId by remember { mutableStateOf<String?>(null) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
+    var showModelListDialog by remember { mutableStateOf(false) }
+    
+    // Refresh downloaded models
+    fun refreshModels() {
+        downloadedModels = localModelManager.getDownloadedModels()
+    }
+    
+    SettingsSection(title = "Local AI Models") {
+        // Current model info
+        val currentModelInfo = com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS
+            .find { it.id == selectedLocalModel }
+        val isCurrentModelDownloaded = localModelManager.isModelDownloaded(selectedLocalModel)
+        
+        SettingsItem(
+            icon = Icons.Default.SmartToy,
+            title = "Active Model",
+            subtitle = if (isCurrentModelDownloaded) {
+                "${currentModelInfo?.name ?: selectedLocalModel} ✓"
+            } else {
+                "${currentModelInfo?.name ?: selectedLocalModel} (Not downloaded)"
+            },
+            onClick = { showModelListDialog = true }
+        )
+        
+        // Download status / progress
+        if (isDownloading) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                val downloadingModel = com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS
+                    .find { it.id == downloadingModelId }
+                Text(
+                    "Downloading ${downloadingModel?.name ?: "model"}...",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { downloadProgress / 100f },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "$downloadProgress%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        
+        // Download error
+        if (downloadError != null) {
+            Text(
+                text = "❌ $downloadError",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+        }
+        
+        // Downloaded models count
+        val totalStorage = localModelManager.getTotalStorageUsed()
+        val storageText = when {
+            totalStorage >= 1_000_000_000 -> String.format("%.1f GB", totalStorage / 1_000_000_000.0)
+            totalStorage >= 1_000_000 -> String.format("%.1f MB", totalStorage / 1_000_000.0)
+            else -> "0 MB"
+        }
+        
+        Text(
+            text = "${downloadedModels.size} model(s) downloaded • $storageText used",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+        
+        // Info text
+        Text(
+            text = "Models run entirely on your device. Recommended: 8GB+ RAM for best performance.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+    }
+    
+    // Model list dialog
+    if (showModelListDialog) {
+        AlertDialog(
+            onDismissRequest = { showModelListDialog = false },
+            title = { Text("Local AI Models") },
+            text = {
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 400.dp)
+                ) {
+                    items(com.satory.graphenosai.llm.LocalModelManager.AVAILABLE_MODELS) { model ->
+                        val isDownloaded = localModelManager.isModelDownloaded(model.id)
+                        val isSelected = selectedLocalModel == model.id
+                        val isThisDownloading = downloadingModelId == model.id && isDownloading
+                        
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable(enabled = !isThisDownloading) {
+                                    if (isDownloaded) {
+                                        // Select this model
+                                        selectedLocalModel = model.id
+                                        settingsManager.localModelId = model.id
+                                        assistantService?.loadLocalModel(model.id)
+                                        showModelListDialog = false
+                                    } else {
+                                        // Start download
+                                        isDownloading = true
+                                        downloadingModelId = model.id
+                                        downloadError = null
+                                        downloadProgress = 0
+                                        
+                                        scope.launch {
+                                            localModelManager.downloadModel(model.id).collect { progress ->
+                                                when (progress) {
+                                                    is com.satory.graphenosai.llm.DownloadProgress.Downloading -> {
+                                                        downloadProgress = progress.percent
+                                                    }
+                                                    is com.satory.graphenosai.llm.DownloadProgress.Completed -> {
+                                                        isDownloading = false
+                                                        downloadingModelId = null
+                                                        refreshModels()
+                                                        // Auto-select downloaded model
+                                                        selectedLocalModel = model.id
+                                                        settingsManager.localModelId = model.id
+                                                        assistantService?.loadLocalModel(model.id)
+                                                    }
+                                                    is com.satory.graphenosai.llm.DownloadProgress.Error -> {
+                                                        isDownloading = false
+                                                        downloadingModelId = null
+                                                        downloadError = progress.message
+                                                    }
+                                                    else -> {}
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isSelected && isDownloaded) 
+                                    MaterialTheme.colorScheme.primaryContainer 
+                                else 
+                                    MaterialTheme.colorScheme.surface
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            model.name,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        if (model.recommended) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                "⭐",
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                    }
+                                    
+                                    if (isDownloaded) {
+                                        if (isSelected) {
+                                            Icon(
+                                                Icons.Default.CheckCircle,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        } else {
+                                            Icon(
+                                                Icons.Default.Download,
+                                                contentDescription = "Downloaded",
+                                                tint = MaterialTheme.colorScheme.tertiary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    } else if (isThisDownloading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                    } else {
+                                        Text(
+                                            model.formattedSize(),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                
+                                Spacer(modifier = Modifier.height(4.dp))
+                                
+                                Text(
+                                    model.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                
+                                if (!isDownloaded && !isThisDownloading) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "Tap to download",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showModelListDialog = false }) {
+                    Text("Close")
+                }
+            },
+            dismissButton = {
+                // Delete downloaded models button
+                if (downloadedModels.isNotEmpty()) {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                downloadedModels.forEach { model ->
+                                    localModelManager.deleteModel(model.id)
+                                }
+                                refreshModels()
+                            }
+                        }
+                    ) {
+                        Text("Delete All", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        )
+    }
+}
+
+/**
+ * Dialog for selecting local models from downloaded collection
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LocalModelSelectionDialog(
+    currentModel: String,
+    onModelSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.8f)
+        ) {
+            Column {
+                TopAppBar(
+                    title = { Text("Select Local Model") },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+                )
+                
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(LocalModelManager.AVAILABLE_MODELS) { model ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onModelSelected(model.id)
+                                }
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = model.id == currentModel,
+                                onClick = { onModelSelected(model.id) }
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    model.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    model.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -33,6 +33,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -40,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.satory.graphenosai.llm.LocalModelManager
 import com.satory.graphenosai.service.AssistantService
 import com.satory.graphenosai.service.AssistantState
 import com.satory.graphenosai.ui.theme.AiintegratedintoandroidTheme
@@ -206,6 +208,9 @@ fun CompactAssistantView(
     // Get web search state
     val webSearchEnabled by service.webSearchEnabled.collectAsStateWithLifecycle()
     
+    // Check if using local AI (offline mode - no web search)
+    val isLocalProvider = service.settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
+    
     // Auto-start voice input when opening (like Gemini)
     val autoStartVoice = settingsManager.autoStartVoice
     LaunchedEffect(Unit) {
@@ -214,21 +219,24 @@ fun CompactAssistantView(
         }
     }
     
-    // Check vision support - works for both Copilot and OpenRouter
+    // Check vision support - works for both Copilot and OpenRouter (not Local)
     val isCopilot = service.settingsManager.apiProvider == SettingsManager.PROVIDER_COPILOT
-    val currentModel = service.settingsManager.selectedModel
-    val modelList = if (isCopilot) SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
-    val currentModelInfo = modelList.find { it.id == currentModel }
-    // Vision supported if: Copilot model with vision, or OpenRouter vision-capable model
-    val supportsVision = if (isCopilot) {
-        currentModelInfo?.supportsVision == true
-    } else {
-        service.openRouterClient.isVisionCapable()
+    val currentModel = if (isLocalProvider) service.settingsManager.localModelId else service.settingsManager.selectedModel
+    // For local provider, we don't use cloud model lists
+    val currentModelInfo = if (isLocalProvider) null else {
+        val modelList = if (isCopilot) SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
+        modelList.find { it.id == currentModel }
+    }
+    // Vision supported if: Copilot model with vision, or OpenRouter vision-capable model (not Local)
+    val supportsVision = when {
+        isLocalProvider -> false  // Local models don't support vision
+        isCopilot -> currentModelInfo?.supportsVision == true
+        else -> service.openRouterClient.isVisionCapable()
     }
     
     // Debug logging
-    LaunchedEffect(isCopilot, currentModel, supportsVision) {
-        android.util.Log.d("CompactAssistantUI", "Vision check: isCopilot=$isCopilot, model=$currentModel, modelInfo=$currentModelInfo, supportsVision=$supportsVision")
+    LaunchedEffect(isCopilot, currentModel, supportsVision, isLocalProvider) {
+        android.util.Log.d("CompactAssistantUI", "Vision check: isCopilot=$isCopilot, isLocal=$isLocalProvider, model=$currentModel, modelInfo=$currentModelInfo, supportsVision=$supportsVision")
     }
     
     // PDF picker launcher
@@ -591,19 +599,21 @@ fun CompactAssistantView(
                         )
                     }
                     
-                    // Web search toggle
-                    IconButton(
-                        onClick = { service.toggleWebSearch() },
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(
-                            if (webSearchEnabled) Icons.Default.TravelExplore else Icons.Default.Public,
-                            contentDescription = "Toggle web search",
-                            tint = if (webSearchEnabled) 
-                                MaterialTheme.colorScheme.primary 
-                            else 
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
+                    // Web search toggle - hidden for local AI (offline mode)
+                    if (!isLocalProvider) {
+                        IconButton(
+                            onClick = { service.toggleWebSearch() },
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                if (webSearchEnabled) Icons.Default.TravelExplore else Icons.Default.Public,
+                                contentDescription = "Toggle web search",
+                                tint = if (webSearchEnabled) 
+                                    MaterialTheme.colorScheme.primary 
+                                else 
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                        }
                     }
                     
                     OutlinedTextField(
@@ -718,15 +728,26 @@ fun FullChatScreen(
     
     // Model selector state
     var showModelDialog by remember { mutableStateOf(false) }
-    var currentModel by remember { mutableStateOf(service.settingsManager.selectedModel) }
+    var currentModel by remember { 
+        mutableStateOf(
+            if (service.settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL)
+                service.settingsManager.localModelId
+            else
+                service.settingsManager.selectedModel
+        )
+    }
     val isCopilot = service.settingsManager.apiProvider == SettingsManager.PROVIDER_COPILOT
-    val modelList = if (isCopilot) SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
-    val currentModelInfo = modelList.find { it.id == currentModel }
-    // Vision supported if: Copilot model with vision, or OpenRouter vision-capable model
-    val supportsVision = if (isCopilot) {
-        currentModelInfo?.supportsVision == true
-    } else {
-        service.openRouterClient.isVisionCapable()
+    val isLocalProvider = service.settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
+    // For local provider, we don't use cloud model lists
+    val currentModelInfo = if (isLocalProvider) null else {
+        val modelList = if (isCopilot) SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
+        modelList.find { it.id == currentModel }
+    }
+    // Vision supported if: Copilot model with vision, or OpenRouter vision-capable model (not Local)
+    val supportsVision = when {
+        isLocalProvider -> false
+        isCopilot -> currentModelInfo?.supportsVision == true
+        else -> service.openRouterClient.isVisionCapable()
     }
     
     // PDF picker launcher
@@ -797,67 +818,143 @@ fun FullChatScreen(
         transcription
     } else null
     
-    // Model selector dialog
+    // Model selector dialog - different for local vs cloud providers
     if (showModelDialog) {
-        AlertDialog(
-            onDismissRequest = { showModelDialog = false },
-            title = { Text("Select Model") },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState())
-                ) {
-                    modelList.forEach { model ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    currentModel = model.id
-                                    service.settingsManager.selectedModel = model.id
-                                    service.reloadSettings()
-                                    showModelDialog = false
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = currentModel == model.id,
-                                onClick = {
-                                    currentModel = model.id
-                                    service.settingsManager.selectedModel = model.id
-                                    service.reloadSettings()
-                                    showModelDialog = false
-                                }
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(model.name, fontWeight = FontWeight.Medium)
-                                    if (model.supportsVision && isCopilot) {
+        if (isLocalProvider) {
+            // Local models dialog
+            val localModelManager = remember { LocalModelManager(context) }
+            AlertDialog(
+                onDismissRequest = { showModelDialog = false },
+                title = { Text("Select Local Model") },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    ) {
+                        LocalModelManager.AVAILABLE_MODELS.forEach { model ->
+                            val isDownloaded = localModelManager.isModelDownloaded(model.id)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = isDownloaded) {
+                                        currentModel = model.id
+                                        service.settingsManager.localModelId = model.id
+                                        service.reloadSettings()
+                                        showModelDialog = false
+                                    }
+                                    .padding(vertical = 12.dp)
+                                    .alpha(if (isDownloaded) 1f else 0.5f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = currentModel == model.id,
+                                    onClick = {
+                                        if (isDownloaded) {
+                                            currentModel = model.id
+                                            service.settingsManager.localModelId = model.id
+                                            service.reloadSettings()
+                                            showModelDialog = false
+                                        }
+                                    },
+                                    enabled = isDownloaded
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(model.name, fontWeight = FontWeight.Medium)
                                         Spacer(modifier = Modifier.width(6.dp))
+                                        // Download status icon
                                         Icon(
-                                            Icons.Default.Image,
-                                            contentDescription = "Supports images",
+                                            imageVector = if (isDownloaded) 
+                                                Icons.Default.CheckCircle 
+                                            else 
+                                                Icons.Default.CloudDownload,
+                                            contentDescription = if (isDownloaded) "Downloaded" else "Not downloaded",
                                             modifier = Modifier.size(16.dp),
-                                            tint = MaterialTheme.colorScheme.primary
+                                            tint = if (isDownloaded) 
+                                                MaterialTheme.colorScheme.primary 
+                                            else 
+                                                MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
+                                    Text(
+                                        if (isDownloaded) model.description else "${model.description} (Not downloaded)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                                Text(
-                                    model.description,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
                         }
                     }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showModelDialog = false }) {
+                        Text("Cancel")
+                    }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { showModelDialog = false }) {
-                    Text("Cancel")
+            )
+        } else {
+            // Cloud models dialog (Copilot / OpenRouter)
+            val cloudModelList = if (isCopilot) SettingsManager.COPILOT_MODELS else SettingsManager.AVAILABLE_MODELS
+            AlertDialog(
+                onDismissRequest = { showModelDialog = false },
+                title = { Text("Select Model") },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    ) {
+                        cloudModelList.forEach { model ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        currentModel = model.id
+                                        service.settingsManager.selectedModel = model.id
+                                        service.reloadSettings()
+                                        showModelDialog = false
+                                    }
+                                    .padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = currentModel == model.id,
+                                    onClick = {
+                                        currentModel = model.id
+                                        service.settingsManager.selectedModel = model.id
+                                        service.reloadSettings()
+                                        showModelDialog = false
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(model.name, fontWeight = FontWeight.Medium)
+                                        if (model.supportsVision && isCopilot) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Icon(
+                                                Icons.Default.Image,
+                                                contentDescription = "Supports images",
+                                                modifier = Modifier.size(16.dp),
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        model.description,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showModelDialog = false }) {
+                        Text("Cancel")
+                    }
                 }
-            }
-        )
+            )
+        }
     }
     
     Scaffold(
@@ -1054,18 +1151,20 @@ fun FullChatScreen(
                             )
                         }
                         
-                        // Web search toggle
-                        IconButton(
-                            onClick = onToggleWebSearch
-                        ) {
-                            Icon(
-                                if (webSearchEnabled) Icons.Default.TravelExplore else Icons.Default.Public,
-                                contentDescription = "Toggle web search",
-                                tint = if (webSearchEnabled) 
-                                    MaterialTheme.colorScheme.primary 
-                                else 
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                            )
+                        // Web search toggle - hidden for local AI (offline mode)
+                        if (!isLocalProvider) {
+                            IconButton(
+                                onClick = onToggleWebSearch
+                            ) {
+                                Icon(
+                                    if (webSearchEnabled) Icons.Default.TravelExplore else Icons.Default.Public,
+                                    contentDescription = "Toggle web search",
+                                    tint = if (webSearchEnabled) 
+                                        MaterialTheme.colorScheme.primary 
+                                    else 
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                            }
                         }
                         
                         OutlinedTextField(

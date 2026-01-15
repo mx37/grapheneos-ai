@@ -18,6 +18,8 @@ import com.satory.graphenosai.audio.VoskTranscriber
 import com.satory.graphenosai.audio.WhisperTranscriber
 import com.satory.graphenosai.llm.ChatSession
 import com.satory.graphenosai.llm.CopilotClient
+import com.satory.graphenosai.llm.LlamaCppClient
+import com.satory.graphenosai.llm.LocalModelManager
 import com.satory.graphenosai.llm.OpenRouterClient
 import com.satory.graphenosai.search.BraveSearchClient
 import com.satory.graphenosai.search.ExaSearchClient
@@ -30,7 +32,7 @@ import kotlinx.coroutines.flow.*
 
 /**
  * Foreground service managing the AI assistant lifecycle.
- * Supports chat sessions with context.
+ * Supports chat sessions with context, including local offline LLMs.
  */
 class AssistantService : Service() {
 
@@ -43,6 +45,8 @@ class AssistantService : Service() {
     private lateinit var speechRecognizerManager: SpeechRecognizerManager
     lateinit var openRouterClient: OpenRouterClient
     private lateinit var copilotClient: CopilotClient
+    private lateinit var llamaCppClient: LlamaCppClient
+    lateinit var localModelManager: LocalModelManager
     private lateinit var braveSearchClient: BraveSearchClient
     private lateinit var exaSearchClient: ExaSearchClient
     private lateinit var ttsManager: TTSManager
@@ -184,6 +188,17 @@ class AssistantService : Service() {
                 if (it.contains("/")) it.substringAfter("/") else it
             })
             setSystemPrompt(settingsManager.systemPrompt)
+        }
+        
+        // Initialize local LLM client
+        localModelManager = LocalModelManager(this)
+        llamaCppClient = LlamaCppClient().apply {
+            setSystemPrompt(settingsManager.systemPrompt)
+        }
+        
+        // Initialize local model if provider is set to local
+        if (settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL) {
+            initializeLocalModel()
         }
         
         braveSearchClient = BraveSearchClient(app.secureKeyManager)
@@ -574,15 +589,23 @@ class AssistantService : Service() {
      * Helper to add user message to chat and update UI immediately.
      */
     private fun addUserMessageToChat(query: String, imageBase64: String? = null) {
-        val useCopilot = settingsManager.apiProvider == SettingsManager.PROVIDER_COPILOT
-        if (useCopilot) {
-            copilotClient.chatSession.addUserMessage(query, imageBase64)
-            _chatMessages.value = copilotClient.chatSession.getAllMessages()
-            Log.d(TAG, "Added to Copilot session: '$query', imageLength=${imageBase64?.length}")
-        } else {
-            openRouterClient.chatSession.addUserMessage(query, imageBase64)
-            _chatMessages.value = openRouterClient.chatSession.getAllMessages()
-            Log.d(TAG, "Added to OpenRouter session: '$query', imageLength=${imageBase64?.length}")
+        val provider = settingsManager.apiProvider
+        when (provider) {
+            SettingsManager.PROVIDER_COPILOT -> {
+                copilotClient.chatSession.addUserMessage(query, imageBase64)
+                _chatMessages.value = copilotClient.chatSession.getAllMessages()
+                Log.d(TAG, "Added to Copilot session: '$query', imageLength=${imageBase64?.length}")
+            }
+            SettingsManager.PROVIDER_LOCAL -> {
+                llamaCppClient.chatSession.addUserMessage(query, imageBase64)
+                _chatMessages.value = llamaCppClient.chatSession.getAllMessages()
+                Log.d(TAG, "Added to Local LLM session: '$query'")
+            }
+            else -> {
+                openRouterClient.chatSession.addUserMessage(query, imageBase64)
+                _chatMessages.value = openRouterClient.chatSession.getAllMessages()
+                Log.d(TAG, "Added to OpenRouter session: '$query', imageLength=${imageBase64?.length}")
+            }
         }
     }
     
@@ -601,19 +624,21 @@ class AssistantService : Service() {
 
     /**
      * Main query processing pipeline:
-     * 1. Perform web search if enabled (except for images)
+     * 1. Perform web search if enabled (except for images and local models)
      * 2. Call LLM with context
      * 3. Speak response via TTS
      */
     private suspend fun processQueryInternal(query: String, imageBase64: String? = null) {
         try {
             val sanitizedQuery = sanitizeQuery(query)
+            val isLocal = settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL
             
             var contextSources: List<String> = emptyList()
             var searchContext: String? = null
             
-            // Perform web search if enabled and it's a text query
-            if (_webSearchEnabled.value && imageBase64 == null) {
+            // Perform web search if enabled, it's a text query, and NOT using local model
+            // Local models work completely offline - no web search
+            if (_webSearchEnabled.value && imageBase64 == null && !isLocal) {
                 _assistantState.value = AssistantState.Searching
                 
                 // Use selected search engine
@@ -658,14 +683,24 @@ class AssistantService : Service() {
         _response.value = ""
         
         val fullResponse = StringBuilder()
-        val useCopilot = settingsManager.apiProvider == SettingsManager.PROVIDER_COPILOT
+        val provider = settingsManager.apiProvider
+        val useCopilot = provider == SettingsManager.PROVIDER_COPILOT
+        val useLocal = provider == SettingsManager.PROVIDER_LOCAL
         
-        Log.i(TAG, "Starting LLM request with ${if (useCopilot) "Copilot" else "OpenRouter"}, hasContext=${context != null}, contextLength=${context?.length ?: 0}")
+        val providerName = when {
+            useLocal -> "Local LLM"
+            useCopilot -> "Copilot"
+            else -> "OpenRouter"
+        }
+        Log.i(TAG, "Starting LLM request with $providerName, hasContext=${context != null}, contextLength=${context?.length ?: 0}")
         
         try {
+            // For local models, images are not supported
+            val effectiveImageBase64 = if (useLocal) null else imageBase64
+            
             // If we have search context, modify the last user message to include it
-            val responseFlow = if (context != null && context.isNotBlank()) {
-                // Build enhanced prompt with search results
+            val responseFlow = if (context != null && context.isNotBlank() && !useLocal) {
+                // Build enhanced prompt with search results (not for local models - they work offline)
                 val searchPrompt = """I found the following information from web search. Use this to answer the user's question comprehensively. Don't just list links - synthesize the information into a helpful answer.
 
 --- WEB SEARCH RESULTS ---
@@ -677,17 +712,16 @@ Now answer the user's question: $query"""
                 Log.i(TAG, "Using search context: ${context.take(200)}...")
                 
                 // Use streamCompletionDirect which sends the enhanced query without modifying chat history
-                if (useCopilot) {
-                    copilotClient.streamCompletionDirect(searchPrompt, imageBase64)
-                } else {
-                    openRouterClient.streamCompletionDirect(searchPrompt, imageBase64)
+                when {
+                    useCopilot -> copilotClient.streamCompletionDirect(searchPrompt, effectiveImageBase64)
+                    else -> openRouterClient.streamCompletionDirect(searchPrompt, effectiveImageBase64)
                 }
             } else {
                 // No search context - use normal completion (message already in chat history)
-                if (useCopilot) {
-                    copilotClient.streamCompletion(query, imageBase64)
-                } else {
-                    openRouterClient.streamCompletion(query, imageBase64)
+                when {
+                    useLocal -> llamaCppClient.streamCompletion(query, null)
+                    useCopilot -> copilotClient.streamCompletion(query, effectiveImageBase64)
+                    else -> openRouterClient.streamCompletion(query, effectiveImageBase64)
                 }
             }
             
@@ -710,8 +744,8 @@ Now answer the user's question: $query"""
                 return
             }
             
-            // Append sources if web search was used
-            if (sources.isNotEmpty()) {
+            // Append sources if web search was used (not for local models)
+            if (sources.isNotEmpty() && !useLocal) {
                 val sourcesText = "\n\n📚 Sources:\n" + sources.take(3).mapIndexed { i, url -> 
                     "${i + 1}. $url" 
                 }.joinToString("\n")
@@ -721,21 +755,23 @@ Now answer the user's question: $query"""
             
             // Update chat messages for UI (get fresh state after assistant message was added)
             withContext(Dispatchers.Main) {
-                _chatMessages.value = if (useCopilot) {
-                    copilotClient.chatSession.getAllMessages()
-                } else {
-                    openRouterClient.chatSession.getAllMessages()
+                _chatMessages.value = when {
+                    useLocal -> llamaCppClient.chatSession.getAllMessages()
+                    useCopilot -> copilotClient.chatSession.getAllMessages()
+                    else -> openRouterClient.chatSession.getAllMessages()
                 }
             }
             
-            // Check if AI wants to open URLs
-            val responseText = fullResponse.toString()
-            val urlsToOpen = detectUrlsToOpen(responseText)
-            
-            // Always ask user before opening URLs (for safety and user control)
-            if (urlsToOpen.isNotEmpty()) {
-                _pendingUrls.value = urlsToOpen
-                Log.i(TAG, "Detected ${urlsToOpen.size} URLs for user approval")
+            // Check if AI wants to open URLs (not for local models)
+            if (!useLocal) {
+                val responseText = fullResponse.toString()
+                val urlsToOpen = detectUrlsToOpen(responseText)
+                
+                // Always ask user before opening URLs (for safety and user control)
+                if (urlsToOpen.isNotEmpty()) {
+                    _pendingUrls.value = urlsToOpen
+                    Log.i(TAG, "Detected ${urlsToOpen.size} URLs for user approval")
+                }
             }
             
             // Speak the response if enabled
@@ -777,6 +813,7 @@ Now answer the user's question: $query"""
         
         openRouterClient.clearSession()
         copilotClient.clearSession()
+        llamaCppClient.clearSession()
         _chatMessages.value = emptyList()
         _response.value = ""
         _transcription.value = ""
@@ -798,8 +835,12 @@ Now answer the user's question: $query"""
         _currentChatId = chatId
         
         // Load messages into active session
-        val useCopilot = settingsManager.apiProvider == SettingsManager.PROVIDER_COPILOT
-        val session = if (useCopilot) copilotClient.chatSession else openRouterClient.chatSession
+        val provider = settingsManager.apiProvider
+        val session = when (provider) {
+            SettingsManager.PROVIDER_COPILOT -> copilotClient.chatSession
+            SettingsManager.PROVIDER_LOCAL -> llamaCppClient.chatSession
+            else -> openRouterClient.chatSession
+        }
         
         messages.forEach { msg ->
             when (msg.role) {
@@ -811,6 +852,72 @@ Now answer the user's question: $query"""
         _chatMessages.value = session.getAllMessages()
         Log.i(TAG, "Loaded chat $chatId with ${messages.size} messages (continuing existing)")
     }
+    
+    /**
+     * Initialize local LLM model if selected
+     */
+    private fun initializeLocalModel() {
+        serviceScope.launch(Dispatchers.IO) {
+            val modelId = settingsManager.localModelId
+            val modelPath = localModelManager.getModelPath(modelId)
+            
+            if (modelPath != null) {
+                val modelInfo = localModelManager.getModelInfo(modelId)
+                val modelName = modelInfo?.name ?: "Local Model"
+                
+                Log.i(TAG, "Initializing local model: $modelName at $modelPath")
+                
+                llamaCppClient.initialize()
+                val result = llamaCppClient.loadModel(modelPath, modelName)
+                
+                result.fold(
+                    onSuccess = {
+                        Log.i(TAG, "Local model loaded successfully: $modelName")
+                    },
+                    onFailure = { error ->
+                        Log.e(TAG, "Failed to load local model: ${error.message}")
+                    }
+                )
+            } else {
+                Log.w(TAG, "No local model downloaded for: $modelId")
+            }
+        }
+    }
+    
+    /**
+     * Load a specific local model
+     */
+    fun loadLocalModel(modelId: String) {
+        serviceScope.launch(Dispatchers.IO) {
+            val modelPath = localModelManager.getModelPath(modelId)
+            if (modelPath != null) {
+                val modelInfo = localModelManager.getModelInfo(modelId)
+                val modelName = modelInfo?.name ?: "Local Model"
+                
+                // Unload current model first
+                llamaCppClient.unloadModel()
+                
+                // Load new model
+                llamaCppClient.contextSize = modelInfo?.contextSize ?: 2048
+                val result = llamaCppClient.loadModel(modelPath, modelName)
+                
+                result.fold(
+                    onSuccess = {
+                        settingsManager.localModelId = modelId
+                        Log.i(TAG, "Switched to local model: $modelName")
+                    },
+                    onFailure = { error ->
+                        Log.e(TAG, "Failed to load local model: ${error.message}")
+                    }
+                )
+            }
+        }
+    }
+    
+    /**
+     * Check if local LLM is ready
+     */
+    fun isLocalModelReady(): Boolean = llamaCppClient.isModelLoaded()
     
     /**
      * Reload settings - call this when settings are changed.
@@ -828,6 +935,16 @@ Now answer the user's question: $query"""
         }
         copilotClient.setModel(copilotModel)
         copilotClient.setSystemPrompt(settingsManager.systemPrompt)
+        
+        // Update local model system prompt
+        llamaCppClient.setSystemPrompt(settingsManager.systemPrompt)
+        
+        // If switched to local provider, initialize local model
+        if (settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL) {
+            if (!llamaCppClient.isModelLoaded()) {
+                initializeLocalModel()
+            }
+        }
         
         Log.i(TAG, "Model set to: $effectiveModel (Copilot: $copilotModel)")
         
@@ -859,8 +976,14 @@ Now answer the user's question: $query"""
 
     /**
      * Remove device identifiers and PII from query before sending to cloud.
+     * Note: For local models, sanitization is optional but we keep it for consistency
      */
     private fun sanitizeQuery(query: String): String {
+        // Skip sanitization for local models (they run offline anyway)
+        if (settingsManager.apiProvider == SettingsManager.PROVIDER_LOCAL) {
+            return query.trim()
+        }
+        
         var sanitized = query
         sanitized = sanitized.replace(Regex("[a-f0-9]{16}"), "[REDACTED]")
         sanitized = sanitized.replace(Regex("\\+?\\d{10,15}"), "[PHONE]")
@@ -877,6 +1000,8 @@ Now answer the user's question: $query"""
         speechRecognizerManager.stopListening()
         audioCaptureManager.cancelCapture()
         ttsManager.stop()
+        // Also stop local generation if running
+        llamaCppClient.stopGeneration()
         _assistantState.value = AssistantState.Idle
     }
 }

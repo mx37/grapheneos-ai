@@ -17,31 +17,34 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
-        // NDK configuration for native whisper.cpp
-        // Temporarily disabled - using Vosk for speech recognition
-        // ndk {
-        //     abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-        // }
+        // NDK configuration for native llama.cpp (local AI)
+        ndk {
+            // Only ARM64 for Pixel devices on GrapheneOS
+            abiFilters += listOf("arm64-v8a")
+        }
         
-        // External native build
-        // externalNativeBuild {
-        //     cmake {
-        //         cppFlags += listOf("-std=c++17", "-O3")
-        //         arguments += listOf(
-        //             "-DANDROID_STL=c++_shared",
-        //             "-DANDROID_PLATFORM=android-26"
-        //         )
-        //     }
-        // }
+        // External native build for llama.cpp
+        externalNativeBuild {
+            cmake {
+                cppFlags += listOf("-std=c++17", "-O3", "-ffast-math")
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                    "-DANDROID_PLATFORM=android-26",
+                    "-DANDROID_ARM_NEON=TRUE",
+                    // 16KB page size alignment for Android 15+ / Pixel 9+
+                    "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
+                )
+            }
+        }
     }
     
-    // Native build configuration - temporarily disabled
-    // externalNativeBuild {
-    //     cmake {
-    //         path = file("src/main/cpp/CMakeLists.txt")
-    //         version = "3.22.1"
-    //     }
-    // }
+    // Native build configuration for llama.cpp
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/llama/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     buildTypes {
         debug {
@@ -80,6 +83,15 @@ android {
         }
         jniLibs {
             useLegacyPackaging = true
+            // Include prebuilt llama.cpp libraries
+            pickFirsts += setOf("**/libggml*.so", "**/libllama.so")
+        }
+    }
+    
+    // Include prebuilt llama.cpp native libraries
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/cpp/llama/prebuilt")
         }
     }
     

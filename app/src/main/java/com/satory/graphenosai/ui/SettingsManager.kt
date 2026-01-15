@@ -35,10 +35,15 @@ class SettingsManager(context: Context) {
         // API Providers
         const val PROVIDER_OPENROUTER = "openrouter"
         const val PROVIDER_COPILOT = "copilot"
+        const val PROVIDER_LOCAL = "local"  // Local llama.cpp models
         
         // Search Engines
         const val SEARCH_BRAVE = "brave"
         const val SEARCH_EXA = "exa"
+        
+        // Local model settings
+        private const val KEY_LOCAL_MODEL_ID = "local_model_id"
+        const val DEFAULT_LOCAL_MODEL = "qwen2.5-1.5b-instruct"
         
         val AVAILABLE_MODELS = listOf(
             ModelInfo("openai/gpt-4o-mini", "GPT-4o Mini", "Fast, vision", true),
@@ -165,6 +170,15 @@ class SettingsManager(context: Context) {
     var searchEngine: String
         get() = prefs.getString(KEY_SEARCH_ENGINE, SEARCH_BRAVE) ?: SEARCH_BRAVE
         set(value) = prefs.edit().putString(KEY_SEARCH_ENGINE, value).apply()
+    
+    var localModelId: String
+        get() = prefs.getString(KEY_LOCAL_MODEL_ID, DEFAULT_LOCAL_MODEL) ?: DEFAULT_LOCAL_MODEL
+        set(value) = prefs.edit().putString(KEY_LOCAL_MODEL_ID, value).apply()
+    
+    /**
+     * Check if current provider is local (offline)
+     */
+    fun isLocalProvider(): Boolean = apiProvider == PROVIDER_LOCAL
     
     /**
      * Get the effective model ID to use.
