@@ -12,8 +12,8 @@ android {
         applicationId = "com.satory.graphenosai"
         minSdk = 26 // Required for Android Keystore AES-GCM
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -160,3 +160,22 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
+
+// Validate prebuilt llama.cpp native libraries are present before building
+tasks.register("checkLlamaPrebuilt") {
+    doLast {
+        val prebuiltDir = file("src/main/cpp/llama/prebuilt/arm64-v8a")
+        val required = listOf("libggml-base.so", "libggml-cpu.so", "libggml.so", "libllama.so")
+        val missing = required.filter { !file("src/main/cpp/llama/prebuilt/arm64-v8a/$it").exists() }
+        if (missing.isNotEmpty()) {
+            throw org.gradle.api.GradleException(
+                "Missing prebuilt llama libs in ${prebuiltDir.absolutePath}: ${'$'}missing.\n" +
+                "Build or copy the required .so files into src/main/cpp/llama/prebuilt/arm64-v8a (see docs/LOCAL_AI_SETUP.md)."
+            )
+        } else {
+            println("All required prebuilt llama libs present in ${prebuiltDir.absolutePath}")
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn("checkLlamaPrebuilt") }

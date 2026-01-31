@@ -20,7 +20,8 @@ object LlamaCppBridge {
             isLibraryLoaded = true
             android.util.Log.i("LlamaCppBridge", "Native library loaded successfully")
         } catch (e: UnsatisfiedLinkError) {
-            android.util.Log.e("LlamaCppBridge", "Failed to load native library: ${e.message}")
+            // Log full exception (including stack trace) to help debugging loading issues
+            android.util.Log.e("LlamaCppBridge", "Failed to load native library", e)
             isLibraryLoaded = false
         }
     }

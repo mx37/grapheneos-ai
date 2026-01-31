@@ -59,6 +59,7 @@ out/
 
 # Build outputs
 *.aar
+app/src/main/cpp/llama/build-android/
 
 # Android Studio
 .navigation/

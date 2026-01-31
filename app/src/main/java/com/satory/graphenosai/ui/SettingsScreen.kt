@@ -767,7 +767,7 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Default.Info,
                     title = "AI Assistant for Android",
-                    subtitle = "v1.0.0",
+                    subtitle = "v1.1.1",
                     onClick = {}
                 )
                 

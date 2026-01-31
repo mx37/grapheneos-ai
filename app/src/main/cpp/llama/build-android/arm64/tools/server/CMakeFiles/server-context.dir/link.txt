@@ -1,0 +1,2 @@
+/home/satory/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar qc libserver-context.a "CMakeFiles/server-context.dir/server-task.cpp.o" "CMakeFiles/server-context.dir/server-queue.cpp.o" "CMakeFiles/server-context.dir/server-common.cpp.o" "CMakeFiles/server-context.dir/server-context.cpp.o"
+/home/satory/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib libserver-context.a
