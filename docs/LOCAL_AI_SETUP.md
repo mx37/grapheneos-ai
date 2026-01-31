@@ -94,6 +94,38 @@ The libraries are built with 16KB page size alignment for compatibility with And
 - Check that the model file exists in the app's data directory
 - Ensure sufficient free storage space
 
+### Building / obtaining native llama libraries automatically
+If you don't have prebuilt native libraries in `app/src/main/cpp/llama/prebuilt/arm64-v8a`, you can use the helper script to build them locally (requires Android NDK 27+, CMake 3.22+):
+
+```bash
+# Provide path to your NDK via env var or first argument
+export NDK=/path/to/android/ndk
+./scripts/build-llama-android.sh "$NDK"
+```
+
+The script will clone `llama.cpp`, build `libggml-base.so`, `libggml-cpu.so`, `libggml.so` and `libllama.so` for `arm64-v8a` and copy them into the `prebuilt/arm64-v8a` directory. By default the helper script builds **without OpenMP** (so the resulting libs do not depend on `libomp.so` and work on all devices). If you need OpenMP, pass `--enable-openmp` to the script but note that `libomp.so` must then be present on the device or bundled into the APK.
+
+Usage (recommended):
+
+```bash
+# Build without OpenMP (default)
+./scripts/build-llama-android.sh /path/to/ndk
+
+# Or auto-download NDK and build without OpenMP
+./scripts/build-llama-android.sh --download-ndk
+
+# If you explicitly want OpenMP-enabled libs (not recommended):
+./scripts/build-llama-android.sh --enable-openmp /path/to/ndk
+```
+
+After building, rebuild the app:
+
+```bash
+./gradlew :app:assembleDebug
+```
+
+If you prefer not to build locally, you can also copy prebuilt `.so` files into `app/src/main/cpp/llama/prebuilt/arm64-v8a` (see project `docs/LOCAL_AI_SETUP.md`).
+
 ### Slow inference
 - Use a smaller model (Llama 3.2 1B or TinyLlama)
 - Close other apps to free RAM

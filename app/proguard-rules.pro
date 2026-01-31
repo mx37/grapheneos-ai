@@ -6,17 +6,22 @@
     native <methods>;
 }
 
-# Keep Whisper JNI interface
--keep class com.vincent.ai_integrated_into_android.audio.WhisperJNI {
-    native <methods>;
-    *;
-}
+# Keep JNA (required for Vosk native binding)
+-keep class com.sun.jna.** { *; }
+-dontwarn com.sun.jna.**
+-keep class * extends com.sun.jna.Callback { *; }
+-keep class * extends com.sun.jna.PointerType { *; }
+-keep class * implements com.sun.jna.Library { *; }
+-keepattributes Signature,InnerClasses,EnclosingMethod,Annotation
 
-# Keep data classes for JSON serialization
--keep class com.vincent.ai_integrated_into_android.search.SearchResult { *; }
+# Keep Vosk classes
+-keep class org.vosk.** { *; }
+-dontwarn org.vosk.**
 
-# Keep service classes
--keep class com.vincent.ai_integrated_into_android.service.** { *; }
+# Keep Llama JNI bridge and related classes
+-keep class com.satory.graphenosai.llm.LlamaCppBridge { *; }
+-keep class com.satory.graphenosai.llm.LlamaCppBridge$* { *; }
+-dontwarn com.satory.graphenosai.llm.**
 
 # Keep accessibility service
 -keep class * extends android.accessibilityservice.AccessibilityService

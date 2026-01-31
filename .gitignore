@@ -39,6 +39,9 @@ out/
 # C++ artifacts (if rebuilding)
 app/src/main/cpp/whisper.cpp/
 
+# Prebuilt native libraries (regenerate with scripts/build-llama-android.sh)
+app/src/main/cpp/llama/prebuilt/
+
 # Flutter (if using)
 flutter_module/
 .pub/
@@ -59,6 +62,7 @@ out/
 
 # Build outputs
 *.aar
+app/src/main/cpp/llama/build-android/
 
 # Android Studio
 .navigation/

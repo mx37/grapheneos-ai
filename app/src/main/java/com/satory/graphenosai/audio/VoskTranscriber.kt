@@ -235,9 +235,39 @@ class VoskTranscriber(private val context: Context) {
         try {
             val modelDir = getModelDirectory(languageCode)
             
-            if (!modelDir.exists() || !File(modelDir, "am/final.mdl").exists()) {
+            // Check for model files - try different possible names
+            val possibleMdlFiles = listOf(
+                "am/final.mdl",
+                "am/model.mdl",
+                "final.mdl",
+                "model.mdl"
+            )
+            
+            val foundMdlFile = possibleMdlFiles.map { File(modelDir, it) }.find { it.exists() } ?: 
+                modelDir.walkTopDown().find { it.isFile && it.name.endsWith(".mdl") }
+            
+            if (!modelDir.exists() || foundMdlFile == null) {
                 Log.w(TAG, "Vosk model for $languageCode not found at ${modelDir.absolutePath}")
+                if (modelDir.exists()) {
+                    Log.w(TAG, "Model directory contents:")
+                    modelDir.walkTopDown().forEach { file ->
+                        Log.w(TAG, "  ${file.relativeTo(modelDir)} (${if (file.isDirectory) "dir" else "file"})")
+                    }
+                    // Try to find any .mdl file
+                    val mdlFiles = modelDir.walkTopDown().filter { it.isFile && it.name.endsWith(".mdl") }.toList()
+                    if (mdlFiles.isNotEmpty()) {
+                        Log.w(TAG, "Found .mdl files: ${mdlFiles.joinToString { it.relativeTo(modelDir).toString() }}")
+                    } else {
+                        Log.w(TAG, "No .mdl files found in model directory")
+                    }
+                }
                 return@withContext false
+            }
+            
+            // If found in different location, log it
+            val expectedPath = "am/final.mdl"
+            if (foundMdlFile.absolutePath != File(modelDir, expectedPath).absolutePath) {
+                Log.i(TAG, "Found model file at ${foundMdlFile.relativeTo(modelDir)} instead of $expectedPath")
             }
             
             Log.i(TAG, "Loading Vosk model for $languageCode from ${modelDir.absolutePath}")
@@ -255,7 +285,12 @@ class VoskTranscriber(private val context: Context) {
             Log.i(TAG, "Vosk model loaded for $languageCode")
             return@withContext true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load Vosk model for $languageCode", e)
+            Log.e(TAG, "Failed to load Vosk model for $languageCode: ${e.message}", e)
+            Log.e(TAG, "Exception type: ${e.javaClass.name}")
+            val cause = e.cause
+            if (cause != null) {
+                Log.e(TAG, "Cause: ${cause.message}", cause)
+            }
             isModelLoaded = false
             return@withContext false
         } catch (e: OutOfMemoryError) {
