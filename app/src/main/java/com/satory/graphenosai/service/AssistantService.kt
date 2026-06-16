@@ -685,7 +685,9 @@ class AssistantService : Service() {
             }
         } catch (e: CancellationException) {
             Log.i(TAG, "Query processing cancelled")
-            _assistantState.value = AssistantState.Idle
+            if (_assistantState.value !is AssistantState.Complete) {
+                _assistantState.value = AssistantState.Idle
+            }
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Query processing error", e)
@@ -1010,7 +1012,9 @@ class AssistantService : Service() {
             finalizeResponse(fullResponse.toString(), emptyList())
         } catch (e: CancellationException) {
             Log.i(TAG, "Direct streaming cancelled")
-            _assistantState.value = AssistantState.Idle
+            if (_assistantState.value !is AssistantState.Complete) {
+                _assistantState.value = AssistantState.Idle
+            }
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error in streamDirect", e)
@@ -1395,15 +1399,24 @@ class AssistantService : Service() {
     }
 
     fun stopResponse() {
-        val wasActive = _assistantState.value is AssistantState.Processing ||
-            _assistantState.value is AssistantState.Searching ||
-            _assistantState.value is AssistantState.Responding ||
-            _assistantState.value is AssistantState.Speaking
+        val currentState = _assistantState.value
+        val wasSpeakingOnly = currentState is AssistantState.Speaking
+        val wasActive = currentState is AssistantState.Processing ||
+            currentState is AssistantState.Searching ||
+            currentState is AssistantState.Responding ||
+            wasSpeakingOnly
 
         activeResponseJob?.cancel()
         activeResponseJob = null
         ttsManager.stop()
         llamaCppClient.stopGeneration()
+
+        if (wasSpeakingOnly) {
+            // Response is already in chat history — only indicate TTS was stopped.
+            _response.value = "[TTS stopped]"
+            _assistantState.value = AssistantState.Complete
+            return
+        }
 
         val hadPartialResponse = wasActive && _response.value.isNotBlank()
         if (hadPartialResponse) {
